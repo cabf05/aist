@@ -143,9 +143,9 @@ def main():
                     response = handle_huggingface(prompt)
                 elif st.session_state.selected_provider == "Cohere":
                     response = handle_cohere(prompt)
-            
-            st.subheader("Resposta:")
-            st.write(response)
+                
+                st.subheader("Resposta:")
+                st.write(response)
         
         if st.button("Alterar Provedor"):
             st.session_state.current_page = "select_provider"
