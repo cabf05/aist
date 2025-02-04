@@ -10,7 +10,7 @@ def get_free_ai_solutions():
             "average_daily_requests": "~500 dependendo do modelo.",
             "setup_steps": [
                 "Criar uma conta no Hugging Face.",
-                "Gerar um Token de Escrita (Write) em Settings > Access Tokens.",
+                "Gerar um **Token de Escrita (Write)** em Settings > Access Tokens.",
                 "Selecionar um modelo gratuito disponível."
             ],
             "config_fields": ["Hugging Face Token", "Modelo"]
@@ -43,7 +43,11 @@ def get_hugging_face_models():
         return [model['modelId'] for model in response.json()]
     else:
         st.error(f"Erro ao buscar modelos do Hugging Face: {response.status_code} - {response.text}")
-    return []
+        return []
+
+# Inicializa a configuração se ainda não existir
+if "ai_config" not in st.session_state:
+    st.session_state["ai_config"] = {}
 
 st.title("Configuração de IA Gratuita")
 
@@ -78,7 +82,7 @@ if solution_name:
         st.success("Configuração salva com sucesso!")
 
 st.title("Usar Inteligência Artificial")
-if "ai_config" not in st.session_state:
+if not st.session_state["ai_config"]:
     st.warning("Verifique configuração de inteligência artificial.")
 else:
     prompt = st.text_area("Digite seu prompt:")
@@ -86,22 +90,31 @@ else:
         ai_config = st.session_state["ai_config"]
         response = None
         
-        if ai_config["solution"] == "Hugging Face":
-            headers = {"Authorization": f"Bearer {ai_config['config']['Hugging Face Token']}"}
-            data = {"inputs": prompt}
-            url = f"https://api-inference.huggingface.co/models/{ai_config['config']['Modelo']}"
-            response = requests.post(url, headers=headers, json=data)
-        elif ai_config["solution"] == "Cohere":
-            headers = {"Authorization": f"Bearer {ai_config['config']['Cohere API Key']}", "Content-Type": "application/json"}
-            data = {"model": "command-xlarge", "prompt": prompt, "max_tokens": 100}
-            response = requests.post("https://api.cohere.ai/v1/generate", headers=headers, json=data)
-        elif ai_config["solution"] == "OpenAI (GPT)":
-            headers = {"Authorization": f"Bearer {ai_config['config']['OpenAI API Key']}", "Content-Type": "application/json"}
-            data = {"model": "gpt-3.5-turbo", "messages": [{"role": "user", "content": prompt}]}
-            response = requests.post("https://api.openai.com/v1/chat/completions", headers=headers, json=data)
-        
-        if response and response.status_code == 200:
-            st.write("**Resposta da IA:**")
-            st.write(response.json())
+        try:
+            if ai_config["solution"] == "Hugging Face":
+                headers = {"Authorization": f"Bearer {ai_config['config']['Hugging Face Token']}"}
+                data = {"inputs": prompt}
+                url = f"https://api-inference.huggingface.co/models/{ai_config['config']['Modelo']}"
+                response = requests.post(url, headers=headers, json=data)
+            
+            elif ai_config["solution"] == "Cohere":
+                headers = {"Authorization": f"Bearer {ai_config['config']['Cohere API Key']}", "Content-Type": "application/json"}
+                data = {"model": "command-xlarge", "prompt": prompt, "max_tokens": 100}
+                response = requests.post("https://api.cohere.ai/v1/generate", headers=headers, json=data)
+
+            elif ai_config["solution"] == "OpenAI (GPT)":
+                headers = {"Authorization": f"Bearer {ai_config['config']['OpenAI API Key']}", "Content-Type": "application/json"}
+                data = {"model": "gpt-3.5-turbo", "messages": [{"role": "user", "content": prompt}]}
+                response = requests.post("https://api.openai.com/v1/chat/completions", headers=headers, json=data)
+
+            if response and response.status_code == 200:
+                st.write("**Resposta da IA:**")
+                st.write(response.json())
+            else:
+                st.error(f"Erro ao processar a requisição. Código: {response.status_code if response else 'N/A'} - {response.text if response else 'Sem resposta'}")
+
+        except Exception as e:
+            st.error(f"Erro inesperado: {str(e)}")
+
         else:
             st.error(f"Erro ao processar a requisição. Código: {response.status_code if response else 'N/A'} - {response.text if response else 'Sem resposta'}")
