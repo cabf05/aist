@@ -62,15 +62,14 @@ if solution_name:
     st.subheader("Configuração")
     config = {}
     for field in solution["config_fields"]:
-        config[field] = st.text_input(field, type="password" if "Key" in field else "default")
-    
-    if solution_name == "Hugging Face":
-        st.subheader("Escolha um Modelo Gratuito:")
-        models = get_hugging_face_models()
-        if models:
-            config["Modelo"] = st.selectbox("Modelos disponíveis:", models)
+        if field == "Modelo" and solution_name == "Hugging Face":
+            models = get_hugging_face_models()
+            if models:
+                config[field] = st.selectbox("Modelos disponíveis:", models)
+            else:
+                st.write("Não foi possível obter os modelos gratuitos.")
         else:
-            st.write("Não foi possível obter os modelos gratuitos.")
+            config[field] = st.text_input(field, type="password" if "Key" in field else "default")
     
     if st.button("Salvar Configuração"):
         st.session_state["ai_config"] = {"solution": solution_name, "config": config}
