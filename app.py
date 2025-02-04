@@ -1,7 +1,7 @@
 import streamlit as st
 import requests
 import cohere
-from huggingface_hub import list_models
+import re
 
 # Configuração inicial da página
 st.set_page_config(page_title="AI Solutions Interface", layout="wide")
@@ -11,16 +11,12 @@ AI_SOLUTIONS = {
     "Hugging Face": {
         "config_steps": [
             "1. Crie uma conta no Hugging Face (https://huggingface.co/)",
-            "2. Acesse suas configurações de perfil e gere um Token de Acesso",
-            "3. Selecione o modelo desejado (alguns modelos requerem aceitação de termos)"
+            "2. Acesse suas configurações de perfil > Tokens de Acesso",
+            "3. Gere um Token do tipo **Read** (não use Write ou Fine-grained)",
+            "4. Na página do modelo desejado, clique em 'Use this model'",
+            "5. Cole o código da seção 'Use a pipeline as a high-level helper' abaixo"
         ],
-        "limits": "Limite gratuito: ~30,000 tokens/dia\nAlguns modelos têm restrições específicas",
-        "models": {
-            "gpt2": {"requires_auth": False, "parameters": {}},
-            "bigscience/bloom-560m": {"requires_auth": False, "parameters": {"max_length": 100}},
-            "google/flan-t5-base": {"requires_auth": False, "parameters": {"max_length": 200}},
-            "meta-llama/Llama-2-7b-chat-hf": {"requires_auth": True, "parameters": {"max_new_tokens": 150}}
-        }
+        "limits": "Limite gratuito: ~30,000 tokens/dia\nAlguns modelos têm restrições específicas"
     },
     "Cohere": {
         "config_steps": [
@@ -34,32 +30,40 @@ AI_SOLUTIONS = {
         "config_steps": [
             "1. Crie uma conta no DeepInfra (https://deepinfra.com/)",
             "2. Acesse sua dashboard para obter a API Key",
-            "3. Selecione um modelo dos disponíveis"
+            "3. Cole sua chave API abaixo"
         ],
-        "limits": "Limite gratuito: 1000 requisições/mês",
-        "models": ["meta-llama/Llama-2-70b-chat", "databricks/dolly-v2-12b"]
+        "limits": "Limite gratuito: 1000 requisições/mês"
     }
 }
 
+def extract_model_id(code):
+    # Tentar encontrar padrões comuns no código fornecido
+    patterns = [
+        r"model='([^']+)'",          # Para pipeline
+        r"from_pretrained\('([^']+)'" # Para load direct
+    ]
+    
+    for pattern in patterns:
+        match = re.search(pattern, code)
+        if match:
+            return match.group(1)
+    return None
+
 def handle_huggingface(prompt):
     try:
-        API_URL = f"https://api-inference.huggingface.co/models/{st.session_state.selected_model}"
+        if not hasattr(st.session_state, 'hf_model_id') or not st.session_state.hf_model_id:
+            return "Model ID não configurado corretamente"
+        
+        API_URL = f"https://api-inference.huggingface.co/models/{st.session_state.hf_model_id}"
         headers = {"Authorization": f"Bearer {st.session_state.hf_token}"}
         
-        # Obter parâmetros específicos do modelo
-        model_params = AI_SOLUTIONS["Hugging Face"]["models"][st.session_state.selected_model]["parameters"]
+        payload = {
+            "inputs": prompt,
+            "parameters": {"max_new_tokens": 200}
+        }
         
-        response = requests.post(
-            API_URL,
-            headers=headers,
-            json={
-                "inputs": prompt,
-                "parameters": model_params
-            },
-            timeout=30
-        )
+        response = requests.post(API_URL, headers=headers, json=payload, timeout=30)
 
-        # Tratar diferentes códigos de status
         if response.status_code == 503:
             estimated_time = response.json().get('estimated_time', 30)
             return f"Modelo está carregando... Tente novamente em {estimated_time} segundos"
@@ -68,21 +72,12 @@ def handle_huggingface(prompt):
             error = response.json().get('error', 'Erro desconhecido')
             return f"Erro na API ({response.status_code}): {error}"
 
-        # Processar diferentes formatos de resposta
         result = response.json()
         
         if isinstance(result, list):
-            if len(result) > 0:
-                return result[0].get('generated_text', result[0].get('text', 'Resposta em formato desconhecido'))
-            return "Resposta vazia recebida"
+            return result[0].get('generated_text', str(result))
             
-        if 'generated_text' in result:
-            return result['generated_text']
-            
-        if 'text' in result:
-            return result['text']
-            
-        return str(result)
+        return result.get('generated_text', str(result))
 
     except Exception as e:
         return f"Erro na requisição: {str(e)}"
@@ -98,6 +93,29 @@ def handle_cohere(prompt):
         return response.generations[0].text
     except Exception as e:
         return f"Erro na Cohere: {str(e)}"
+
+def handle_deepinfra(prompt):
+    try:
+        API_URL = "https://api.deepinfra.com/v1/openai/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {st.session_state.deepinfra_token}",
+            "Content-Type": "application/json"
+        }
+        
+        payload = {
+            "model": st.session_state.deepinfra_model,
+            "messages": [{"role": "user", "content": prompt}]
+        }
+        
+        response = requests.post(API_URL, headers=headers, json=payload, timeout=30)
+        
+        if response.status_code != 200:
+            return f"Erro na API ({response.status_code}): {response.text}"
+            
+        return response.json()['choices'][0]['message']['content']
+    
+    except Exception as e:
+        return f"Erro no DeepInfra: {str(e)}"
 
 def main():
     st.title("Interface de Soluções de IA Gratuitas")
@@ -127,16 +145,27 @@ def main():
             st.markdown(step)
         
         if st.session_state.selected_provider == "Hugging Face":
-            st.session_state.hf_token = st.text_input("Token de Acesso do Hugging Face:", type="password")
-            model_list = list(provider_info["models"].keys())
-            st.session_state.selected_model = st.selectbox("Selecione o modelo:", model_list)
+            st.markdown("### Exemplo de código válido:")
+            st.code("from transformers import pipeline\npipe = pipeline('text-generation', model='google/flan-t5-base')")
             
-            if provider_info["models"][st.session_state.selected_model]["requires_auth"]:
-                st.warning("Este modelo requer aceitação de termos no site do Hugging Face!")
-                st.markdown(f"🔗 [Acessar modelo](https://huggingface.co/{st.session_state.selected_model})")
+            model_code = st.text_area("Cole o código do modelo aqui:", height=100)
+            if model_code:
+                model_id = extract_model_id(model_code)
+                if model_id:
+                    st.session_state.hf_model_id = model_id
+                    st.success(f"Model ID detectado: {model_id}")
+                else:
+                    st.error("Não foi possível detectar o Model ID no código. Certifique-se de colar o código completo da seção 'Use a pipeline as a high-level helper'")
+            
+            st.session_state.hf_token = st.text_input("Token de Acesso (Tipo Read):", type="password")
+            st.markdown("**Nota:** O token deve ser do tipo **Read** para acesso à API")
 
         elif st.session_state.selected_provider == "Cohere":
             st.session_state.cohere_token = st.text_input("Chave API da Cohere:", type="password")
+        
+        elif st.session_state.selected_provider == "DeepInfra":
+            st.session_state.deepinfra_token = st.text_input("API Key do DeepInfra:", type="password")
+            st.session_state.deepinfra_model = st.text_input("Modelo do DeepInfra (ex: meta-llama/Llama-2-70b-chat):")
         
         if st.button("Salvar Configurações"):
             st.session_state.current_page = "use_ai"
@@ -152,33 +181,39 @@ def main():
         
         # Verificação de configuração
         config_valid = True
-        if st.session_state.selected_provider == "Hugging Face":
-            if not hasattr(st.session_state, "hf_token") or not st.session_state.hf_token:
-                config_valid = False
+        provider = st.session_state.selected_provider
         
-        elif st.session_state.selected_provider == "Cohere":
-            if not hasattr(st.session_state, "cohere_token") or not st.session_state.cohere_token:
+        if provider == "Hugging Face":
+            required = ['hf_token', 'hf_model_id']
+        elif provider == "Cohere":
+            required = ['cohere_token']
+        elif provider == "DeepInfra":
+            required = ['deepinfra_token', 'deepinfra_model']
+        
+        for field in required:
+            if not hasattr(st.session_state, field) or not getattr(st.session_state, field):
                 config_valid = False
         
         if not config_valid:
-            st.error("Verifique a configuração de inteligência artificial!")
+            st.error("Configuração incompleta! Verifique todos os campos obrigatórios.")
             if st.button("Voltar para configuração"):
                 st.session_state.current_page = "configure_provider"
                 st.rerun()
             return
         
-        # Interface de prompt
         prompt = st.text_area("Digite seu prompt:", height=150)
         
         if st.button("Requisitar Resposta"):
             with st.spinner("Processando..."):
                 try:
-                    if st.session_state.selected_provider == "Hugging Face":
+                    if provider == "Hugging Face":
                         response = handle_huggingface(prompt)
-                    elif st.session_state.selected_provider == "Cohere":
+                    elif provider == "Cohere":
                         response = handle_cohere(prompt)
+                    elif provider == "DeepInfra":
+                        response = handle_deepinfra(prompt)
                     else:
-                        response = "Provedor não configurado corretamente"
+                        response = "Provedor não configurado"
                 except Exception as e:
                     response = f"Erro crítico: {str(e)}"
                 
