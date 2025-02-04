@@ -1,120 +1,158 @@
 import streamlit as st
 import requests
-import json
+import cohere
+import os
+from huggingface_hub import list_models
 
-def get_free_ai_solutions():
-    return {
-        "Hugging Face": {
-            "description": "Plataforma de modelos de IA open-source.",
-            "limits": "Gratuito com limite de chamadas e necessidade de token.",
-            "average_daily_requests": "~500 dependendo do modelo.",
-            "setup_steps": [
-                "Criar uma conta no Hugging Face.",
-                "Gerar um **Token de Escrita (Write)** em Settings > Access Tokens.",
-                "Selecionar um modelo gratuito disponível."
-            ],
-            "config_fields": ["Hugging Face Token", "Modelo"]
-        },
-        "Cohere": {
-            "description": "Modelos de linguagem avançados para geração de texto.",
-            "limits": "Plano gratuito permite 100 chamadas por mês.",
-            "average_daily_requests": "~3 chamadas por dia no plano gratuito.",
-            "setup_steps": [
-                "Criar uma conta no Cohere.",
-                "Obter a API Key na dashboard do Cohere."
-            ],
-            "config_fields": ["Cohere API Key"]
-        },
-        "OpenAI (GPT)": {
-            "description": "Modelos GPT da OpenAI.",
-            "limits": "Plano gratuito permite US$5 em créditos por 3 meses.",
-            "average_daily_requests": "Varia conforme o uso dos créditos.",
-            "setup_steps": [
-                "Criar uma conta na OpenAI.",
-                "Obter a API Key na dashboard da OpenAI."
-            ],
-            "config_fields": ["OpenAI API Key"]
+# Configuração inicial da página
+st.set_page_config(page_title="AI Solutions Interface", layout="wide")
+
+# Dicionário de soluções de IA com limites e informações
+AI_SOLUTIONS = {
+    "Hugging Face": {
+        "config_steps": [
+            "1. Crie uma conta no Hugging Face (https://huggingface.co/)",
+            "2. Acesse suas configurações de perfil e gere um Token de Acesso",
+            "3. Selecione o modelo desejado (alguns modelos requerem aceitação de termos)"
+        ],
+        "limits": "Limite gratuito: ~30,000 tokens/dia\nAlguns modelos têm restrições específicas",
+        "models": {
+            "gpt2": {"requires_auth": False},
+            "bigscience/bloom-560m": {"requires_auth": False},
+            "google/flan-t5-base": {"requires_auth": False},
+            "meta-llama/Llama-2-7b-chat-hf": {"requires_auth": True}
         }
+    },
+    "Cohere": {
+        "config_steps": [
+            "1. Crie uma conta na Cohere (https://dashboard.cohere.com/)",
+            "2. Acesse a seção API Keys no dashboard",
+            "3. Gere e copie sua chave API gratuita"
+        ],
+        "limits": "Plano free: 5 chamadas/minuto\n100 chamadas/dia",
+        "api_key": ""
+    },
+    "DeepInfra": {
+        "config_steps": [
+            "1. Crie uma conta no DeepInfra (https://deepinfra.com/)",
+            "2. Acesse sua dashboard para obter a API Key",
+            "3. Selecione um modelo dos disponíveis"
+        ],
+        "limits": "Limite gratuito: 1000 requisições/mês",
+        "models": ["meta-llama/Llama-2-70b-chat", "databricks/dolly-v2-12b"]
     }
+}
 
-def get_hugging_face_models():
-    response = requests.get("https://huggingface.co/api/models?sort=downloads&limit=5")
-    if response.status_code == 200:
-        return [model['modelId'] for model in response.json()]
-    else:
-        st.error(f"Erro ao buscar modelos do Hugging Face: {response.status_code} - {response.text}")
-        return []
-
-# Inicializa a configuração se ainda não existir
-if "ai_config" not in st.session_state:
-    st.session_state["ai_config"] = {}
-
-st.title("Configuração de IA Gratuita")
-
-solutions = get_free_ai_solutions()
-solution_name = st.selectbox("Escolha a solução de IA:", list(solutions.keys()))
-
-if solution_name:
-    solution = solutions[solution_name]
-    st.subheader(solution_name)
-    st.write(f"**Descrição:** {solution['description']}")
-    st.write(f"**Limites:** {solution['limits']}")
-    st.write(f"**Média de requisições diárias:** {solution['average_daily_requests']}")
+# Funções para cada provedor de IA
+def handle_huggingface(prompt):
+    API_URL = f"https://api-inference.huggingface.co/models/{st.session_state.selected_model}"
+    headers = {"Authorization": f"Bearer {st.session_state.hf_token}"}
     
-    st.subheader("Passo a passo para configuração:")
-    for step in solution["setup_steps"]:
-        st.write(f"- {step}")
-    
-    st.subheader("Configuração")
-    config = {}
-    for field in solution["config_fields"]:
-        if field == "Modelo" and solution_name == "Hugging Face":
-            models = get_hugging_face_models()
-            if models:
-                config[field] = st.selectbox("Modelos disponíveis:", models)
-            else:
-                st.write("Não foi possível obter os modelos gratuitos.")
-        else:
-            config[field] = st.text_input(field, type="password" if "Key" in field else "default")
-    
-    if st.button("Salvar Configuração"):
-        st.session_state["ai_config"] = {"solution": solution_name, "config": config}
-        st.success("Configuração salva com sucesso!")
+    try:
+        response = requests.post(API_URL, headers=headers, json={"inputs": prompt})
+        return response.json()[0]['generated_text']
+    except Exception as e:
+        return f"Erro: {str(e)}"
 
-st.title("Usar Inteligência Artificial")
-if not st.session_state["ai_config"]:
-    st.warning("Verifique configuração de inteligência artificial.")
-else:
-    prompt = st.text_area("Digite seu prompt:")
-    if st.button("Requisitar Resposta"):
-        ai_config = st.session_state["ai_config"]
-        response = None
+def handle_cohere(prompt):
+    try:
+        co = cohere.Client(st.session_state.cohere_token)
+        response = co.generate(
+            model='command-nightly',
+            prompt=prompt,
+            max_tokens=300)
+        return response.generations[0].text
+    except Exception as e:
+        return f"Erro: {str(e)}"
+
+# Interface principal
+def main():
+    st.title("Interface de Soluções de IA Gratuitas")
+    
+    if 'current_page' not in st.session_state:
+        st.session_state.current_page = "select_provider"
+    
+    # Seleção do provedor
+    if st.session_state.current_page == "select_provider":
+        st.header("Escolha seu provedor de IA")
+        selected_provider = st.selectbox("Selecione uma solução de IA:", list(AI_SOLUTIONS.keys()))
         
-        try:
-            if ai_config["solution"] == "Hugging Face":
-                headers = {"Authorization": f"Bearer {ai_config['config']['Hugging Face Token']}"}
-                data = {"inputs": prompt}
-                url = f"https://api-inference.huggingface.co/models/{ai_config['config']['Modelo']}"
-                response = requests.post(url, headers=headers, json=data)
+        st.markdown("### Informações do Plano Gratuito")
+        st.markdown(AI_SOLUTIONS[selected_provider]["limits"])
+        
+        if st.button("Configurar esta solução"):
+            st.session_state.selected_provider = selected_provider
+            st.session_state.current_page = "configure_provider"
+            st.rerun()
+    
+    # Configuração do provedor
+    elif st.session_state.current_page == "configure_provider":
+        st.header(f"Configuração do {st.session_state.selected_provider}")
+        
+        provider_info = AI_SOLUTIONS[st.session_state.selected_provider]
+        
+        for step in provider_info["config_steps"]:
+            st.markdown(step)
+        
+        if st.session_state.selected_provider == "Hugging Face":
+            st.session_state.hf_token = st.text_input("Token de Acesso do Hugging Face:", type="password")
+            model_list = list(provider_info["models"].keys())
+            st.session_state.selected_model = st.selectbox("Selecione o modelo:", model_list)
             
-            elif ai_config["solution"] == "Cohere":
-                headers = {"Authorization": f"Bearer {ai_config['config']['Cohere API Key']}", "Content-Type": "application/json"}
-                data = {"model": "command-xlarge", "prompt": prompt, "max_tokens": 100}
-                response = requests.post("https://api.cohere.ai/v1/generate", headers=headers, json=data)
+            if provider_info["models"][st.session_state.selected_model]["requires_auth"]:
+                st.warning("Este modelo requer aceitação de termos no site do Hugging Face!")
+        
+        elif st.session_state.selected_provider == "Cohere":
+            st.session_state.cohere_token = st.text_input("Chave API da Cohere:", type="password")
+        
+        if st.button("Salvar Configurações"):
+            st.session_state.current_page = "use_ai"
+            st.rerun()
+        
+        if st.button("Voltar"):
+            st.session_state.current_page = "select_provider"
+            st.rerun()
+    
+    # Interface de uso da IA
+    elif st.session_state.current_page == "use_ai":
+        st.header("Utilize a Inteligência Artificial")
+        
+        # Verificação de configuração
+        config_valid = True
+        if st.session_state.selected_provider == "Hugging Face":
+            if not hasattr(st.session_state, "hf_token") or not st.session_state.hf_token:
+                config_valid = False
+        
+        elif st.session_state.selected_provider == "Cohere":
+            if not hasattr(st.session_state, "cohere_token") or not st.session_state.cohere_token:
+                config_valid = False
+        
+        if not config_valid:
+            st.error("Verifique a configuração de inteligência artificial!")
+            if st.button("Voltar para configuração"):
+                st.session_state.current_page = "configure_provider"
+                st.rerun()
+            return
+        
+        # Interface de prompt
+        prompt = st.text_area("Digite seu prompt:", height=150)
+        
+        if st.button("Requisitar Resposta"):
+            with st.spinner("Processando..."):
+                if st.session_state.selected_provider == "Hugging Face":
+                    response = handle_huggingface(prompt)
+                elif st.session_state.selected_provider == "Cohere":
+                    response = handle_cohere(prompt)
+            
+            st.subheader("Resposta:")
+            st.write(response)
+        
+        if st.button("Alterar Provedor"):
+            st.session_state.current_page = "select_provider"
+            st.rerun()
 
-            elif ai_config["solution"] == "OpenAI (GPT)":
-                headers = {"Authorization": f"Bearer {ai_config['config']['OpenAI API Key']}", "Content-Type": "application/json"}
-                data = {"model": "gpt-3.5-turbo", "messages": [{"role": "user", "content": prompt}]}
-                response = requests.post("https://api.openai.com/v1/chat/completions", headers=headers, json=data)
-
-            if response and response.status_code == 200:
-                st.write("**Resposta da IA:**")
-                st.write(response.json())
-            else:
-                st.error(f"Erro ao processar a requisição. Código: {response.status_code if response else 'N/A'} - {response.text if response else 'Sem resposta'}")
-
-        except Exception as e:
-            st.error(f"Erro inesperado: {str(e)}")
+if __name__ == "__main__":
+    main()
 
         else:
             st.error(f"Erro ao processar a requisição. Código: {response.status_code if response else 'N/A'} - {response.text if response else 'Sem resposta'}")
