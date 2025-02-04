@@ -143,6 +143,8 @@ def main():
                     response = handle_huggingface(prompt)
                 elif st.session_state.selected_provider == "Cohere":
                     response = handle_cohere(prompt)
+                else:
+                    response = "Provedor não configurado corretamente"
                 
                 st.subheader("Resposta:")
                 st.write(response)
@@ -153,6 +155,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-        else:
-            st.error(f"Erro ao processar a requisição. Código: {response.status_code if response else 'N/A'} - {response.text if response else 'Sem resposta'}")
