@@ -10,7 +10,7 @@ def get_free_ai_solutions():
             "average_daily_requests": "~500 dependendo do modelo.",
             "setup_steps": [
                 "Criar uma conta no Hugging Face.",
-                "Gerar um Token de Acesso (Settings > Access Tokens).",
+                "Gerar um Token de Escrita (Write) em Settings > Access Tokens.",
                 "Selecionar um modelo gratuito disponível."
             ],
             "config_fields": ["Hugging Face Token", "Modelo"]
@@ -41,6 +41,8 @@ def get_hugging_face_models():
     response = requests.get("https://huggingface.co/api/models?sort=downloads&limit=5")
     if response.status_code == 200:
         return [model['modelId'] for model in response.json()]
+    else:
+        st.error(f"Erro ao buscar modelos do Hugging Face: {response.status_code} - {response.text}")
     return []
 
 st.title("Configuração de IA Gratuita")
@@ -82,6 +84,8 @@ else:
     prompt = st.text_area("Digite seu prompt:")
     if st.button("Requisitar Resposta"):
         ai_config = st.session_state["ai_config"]
+        response = None
+        
         if ai_config["solution"] == "Hugging Face":
             headers = {"Authorization": f"Bearer {ai_config['config']['Hugging Face Token']}"}
             data = {"inputs": prompt}
@@ -96,8 +100,8 @@ else:
             data = {"model": "gpt-3.5-turbo", "messages": [{"role": "user", "content": prompt}]}
             response = requests.post("https://api.openai.com/v1/chat/completions", headers=headers, json=data)
         
-        if response.status_code == 200:
+        if response and response.status_code == 200:
             st.write("**Resposta da IA:**")
             st.write(response.json())
         else:
-            st.error("Erro ao processar a requisição. Verifique sua configuração.")
+            st.error(f"Erro ao processar a requisição. Código: {response.status_code if response else 'N/A'} - {response.text if response else 'Sem resposta'}")
