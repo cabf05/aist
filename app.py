@@ -1,7 +1,6 @@
 import streamlit as st
 import requests
 import cohere
-import os
 from huggingface_hub import list_models
 
 # Configuração inicial da página
@@ -17,10 +16,10 @@ AI_SOLUTIONS = {
         ],
         "limits": "Limite gratuito: ~30,000 tokens/dia\nAlguns modelos têm restrições específicas",
         "models": {
-            "gpt2": {"requires_auth": False},
-            "bigscience/bloom-560m": {"requires_auth": False},
-            "google/flan-t5-base": {"requires_auth": False},
-            "meta-llama/Llama-2-7b-chat-hf": {"requires_auth": True}
+            "gpt2": {"requires_auth": False, "parameters": {}},
+            "bigscience/bloom-560m": {"requires_auth": False, "parameters": {"max_length": 100}},
+            "google/flan-t5-base": {"requires_auth": False, "parameters": {"max_length": 200}},
+            "meta-llama/Llama-2-7b-chat-hf": {"requires_auth": True, "parameters": {"max_new_tokens": 150}}
         }
     },
     "Cohere": {
@@ -30,7 +29,6 @@ AI_SOLUTIONS = {
             "3. Gere e copie sua chave API gratuita"
         ],
         "limits": "Plano free: 5 chamadas/minuto\n100 chamadas/dia",
-        "api_key": ""
     },
     "DeepInfra": {
         "config_steps": [
@@ -43,16 +41,51 @@ AI_SOLUTIONS = {
     }
 }
 
-# Funções para cada provedor de IA
 def handle_huggingface(prompt):
-    API_URL = f"https://api-inference.huggingface.co/models/{st.session_state.selected_model}"
-    headers = {"Authorization": f"Bearer {st.session_state.hf_token}"}
-    
     try:
-        response = requests.post(API_URL, headers=headers, json={"inputs": prompt})
-        return response.json()[0]['generated_text']
+        API_URL = f"https://api-inference.huggingface.co/models/{st.session_state.selected_model}"
+        headers = {"Authorization": f"Bearer {st.session_state.hf_token}"}
+        
+        # Obter parâmetros específicos do modelo
+        model_params = AI_SOLUTIONS["Hugging Face"]["models"][st.session_state.selected_model]["parameters"]
+        
+        response = requests.post(
+            API_URL,
+            headers=headers,
+            json={
+                "inputs": prompt,
+                "parameters": model_params
+            },
+            timeout=30
+        )
+
+        # Tratar diferentes códigos de status
+        if response.status_code == 503:
+            estimated_time = response.json().get('estimated_time', 30)
+            return f"Modelo está carregando... Tente novamente em {estimated_time} segundos"
+        
+        if response.status_code != 200:
+            error = response.json().get('error', 'Erro desconhecido')
+            return f"Erro na API ({response.status_code}): {error}"
+
+        # Processar diferentes formatos de resposta
+        result = response.json()
+        
+        if isinstance(result, list):
+            if len(result) > 0:
+                return result[0].get('generated_text', result[0].get('text', 'Resposta em formato desconhecido'))
+            return "Resposta vazia recebida"
+            
+        if 'generated_text' in result:
+            return result['generated_text']
+            
+        if 'text' in result:
+            return result['text']
+            
+        return str(result)
+
     except Exception as e:
-        return f"Erro: {str(e)}"
+        return f"Erro na requisição: {str(e)}"
 
 def handle_cohere(prompt):
     try:
@@ -60,12 +93,12 @@ def handle_cohere(prompt):
         response = co.generate(
             model='command-nightly',
             prompt=prompt,
-            max_tokens=300)
+            max_tokens=300
+        )
         return response.generations[0].text
     except Exception as e:
-        return f"Erro: {str(e)}"
+        return f"Erro na Cohere: {str(e)}"
 
-# Interface principal
 def main():
     st.title("Interface de Soluções de IA Gratuitas")
     
@@ -88,7 +121,6 @@ def main():
     # Configuração do provedor
     elif st.session_state.current_page == "configure_provider":
         st.header(f"Configuração do {st.session_state.selected_provider}")
-        
         provider_info = AI_SOLUTIONS[st.session_state.selected_provider]
         
         for step in provider_info["config_steps"]:
@@ -101,7 +133,8 @@ def main():
             
             if provider_info["models"][st.session_state.selected_model]["requires_auth"]:
                 st.warning("Este modelo requer aceitação de termos no site do Hugging Face!")
-        
+                st.markdown(f"🔗 [Acessar modelo](https://huggingface.co/{st.session_state.selected_model})")
+
         elif st.session_state.selected_provider == "Cohere":
             st.session_state.cohere_token = st.text_input("Chave API da Cohere:", type="password")
         
@@ -139,12 +172,15 @@ def main():
         
         if st.button("Requisitar Resposta"):
             with st.spinner("Processando..."):
-                if st.session_state.selected_provider == "Hugging Face":
-                    response = handle_huggingface(prompt)
-                elif st.session_state.selected_provider == "Cohere":
-                    response = handle_cohere(prompt)
-                else:
-                    response = "Provedor não configurado corretamente"
+                try:
+                    if st.session_state.selected_provider == "Hugging Face":
+                        response = handle_huggingface(prompt)
+                    elif st.session_state.selected_provider == "Cohere":
+                        response = handle_cohere(prompt)
+                    else:
+                        response = "Provedor não configurado corretamente"
+                except Exception as e:
+                    response = f"Erro crítico: {str(e)}"
                 
                 st.subheader("Resposta:")
                 st.write(response)
